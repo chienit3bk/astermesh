@@ -1,0 +1,73 @@
+Astermesh
+Copyright (c) 2026 ddthang2611 and Astermesh Contributors
+Licensed under the MIT License. See the LICENSE file in the root directory for full license terms.
+
+================================================================================
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+================================================================================
+
+Astermesh declares external open-source Python packages as runtime dependencies
+installed via standard package managers (PyPI). This repository does not bundle,
+vendor, statically link, or modify the third-party libraries listed below. Each
+dependency remains subject to its respective copyright holders and license terms:
+
+1. Permissive Runtime Dependencies
+--------------------------------------------------------------------------------
+- tree-sitter (https://github.com/tree-sitter/py-tree-sitter)
+  Copyright (c) Max Brunsfeld and Contributors
+  License: MIT
+
+- tree-sitter-python (https://github.com/tree-sitter/tree-sitter-python)
+  Copyright (c) Max Brunsfeld, Amaan Qureshi, and Contributors
+  License: MIT
+
+- tree-sitter-javascript (https://github.com/tree-sitter/tree-sitter-javascript)
+  Copyright (c) Max Brunsfeld, Amaan Qureshi, and Contributors
+  License: MIT
+
+- tree-sitter-typescript (https://github.com/tree-sitter/tree-sitter-typescript)
+  Copyright (c) Max Brunsfeld, Amaan Qureshi, and Contributors
+  License: MIT
+
+- networkx (https://networkx.org/)
+  Copyright (c) 2004-2026 NetworkX Developers (Aric Hagberg, Dan Schult, Pieter Swart)
+  License: BSD-3-Clause
+
+- watchdog (https://github.com/gorakhargosh/watchdog)
+  Copyright (c) 2011 Yesudeep Mangalapilly, Mickaël Schoentgen, and Contributors
+  License: Apache-2.0
+
+- mcp (https://modelcontextprotocol.io)
+  Copyright (c) Model Context Protocol, a Series of LF Projects, LLC
+  License: MIT
+
+- typer (https://github.com/fastapi/typer)
+  Copyright (c) 2019 Sebastián Ramírez
+  License: MIT
+
+- pyvis (https://github.com/WestHealth/pyvis)
+  Copyright (c) 2018 West Health Institute (Jose Unpingco and Contributors)
+  License: BSD-3-Clause
+
+- tiktoken (https://github.com/openai/tiktoken)
+  Copyright (c) 2022 OpenAI, Shantanu Jain
+  License: MIT
+
+2. Copyleft Runtime Dependencies (Dynamic Runtime Installation Notice)
+--------------------------------------------------------------------------------
+- igraph / python-igraph (https://igraph.org/python)
+  Copyright (c) The igraph development team (Gabor Csardi, Tamas Nepusz)
+  License: GPL-2.0-or-later
+
+- leidenalg (https://github.com/vtraag/leidenalg)
+  Copyright (c) V.A. Traag
+  License: GPL-3.0-or-later
+
+Notice to Downstream Distributors:
+While the original source code of Astermesh in this repository is licensed under
+the MIT License, executing community clustering at runtime dynamically imports
+`igraph` (GPL-2.0-or-later) and `leidenalg` (GPL-3.0-or-later). If you package
+and redistribute a combined binary, frozen executable, or self-contained
+container image that bundles `igraph` and `leidenalg` alongside Astermesh, your
+combined distribution is subject to the obligations of the GNU General Public
+License (GPL-3.0-or-later).

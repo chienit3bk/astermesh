@@ -140,6 +140,8 @@ See [Benchmark Guide](docs/BENCHMARK.md) for full benchmark methodology and cost
 
 ---
 
-## 6. License
+## 6. License & Legal Compliance
 
-[MIT License](LICENSE).
+- **License**: [MIT License](LICENSE)
+- **Third-Party Notices**: [NOTICE](NOTICE)
+- **Privacy & Data Protection**: [PRIVACY.md](PRIVACY.md)
