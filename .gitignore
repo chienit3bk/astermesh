@@ -191,8 +191,12 @@ indexes
 .indexes
 
 # AI plan
+plan
 /plan
 .plan
+report
+/report
+.report
 
 # AI agents
 agents
@@ -201,8 +205,10 @@ agents
 
 # build and artifact outputs
 xml-graph/
+astermesh-graph/
 output/
 dist/
+*.acn
 *.xml
 *.html
 
@@ -210,3 +216,4 @@ dist/
 test-prj
 *test-prj
 /test-prj
+

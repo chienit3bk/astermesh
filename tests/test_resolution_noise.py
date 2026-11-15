@@ -2,7 +2,8 @@ from pathlib import Path
 
 import networkx as nx
 
-from astermesh.graph.builder import GraphBuilder, is_ignored_dir, is_ignored_file, is_test_path
+from astermesh.graph.builder import GraphBuilder
+from astermesh.graph.filters import is_ignored_dir, is_ignored_file, is_test_path
 from astermesh.graph.model import EdgeType, NodeType
 
 
@@ -17,11 +18,22 @@ def _out(g: nx.MultiDiGraph, node: str) -> set[tuple[str, str]]:
     return {(v, d["type"]) for _, v, d in g.out_edges(node, data=True)}
 
 
+# kiem thu bo loc thu muc, tep bo qua va duong dan test
 def test_ignore_rules_for_codegen_and_test_paths():
+    assert is_ignored_dir(".git")
+    assert is_ignored_dir("foo/.venv/bar")
+    assert is_ignored_dir("astermesh-graph")
     assert is_ignored_dir("extensions/foo/generated")
     assert is_ignored_dir("src/__generated__/schema")
+    assert not is_ignored_dir("src/astermesh")
+    assert not is_ignored_dir(".")
+
+    assert is_ignored_file("vendor.min.js")
+    assert is_ignored_file("app.bundle.js")
+    assert is_ignored_file("app.js.map")
     assert is_ignored_file("schema.generated.ts")
     assert not is_ignored_file("generator.ts")
+    assert not is_ignored_file("App.tsx")
 
     assert is_test_path("src/rules.test.ts")
     assert is_test_path("src/Button.spec.tsx")
@@ -177,3 +189,72 @@ def test_incremental_update_respects_ignore_rules(tmp_path: Path):
 
     assert not builder.graph.has_node("tests/fixtures/x.json")
     assert not builder.graph.has_node("src/api.generated.ts")
+
+
+# kiem thu uu tien phan giai export mac dinh trong linker
+def test_linker_resolve_target_export_priorities(tmp_path: Path):
+    _write(tmp_path, {
+        "src/widget.ts": (
+            "function internalHelper() { return 0; }\n"
+            "export function exportedAction() { return 1; }\n"
+        ),
+        "src/caller.ts": (
+            "import widgetDefault from './widget';\n"
+            "export function run() { return widgetDefault(); }\n"
+        ),
+    })
+
+    g = GraphBuilder(tmp_path).build_full()
+    assert ("src.widget.exportedAction", EdgeType.CALLS.value) in _out(g, "src.caller.run")
+
+
+# barrel re-exports and cycles
+def test_barrel_reexports_and_cycle_guard(tmp_path: Path):
+    _write(tmp_path, {
+        "src/core/alpha.ts": "export function alphaFn() { return 1; }\n",
+        "src/core/beta.ts": (
+            "export function rawBeta() { return 2; }\n"
+            "export function helperBeta() { return 4; }\n"
+            "export default function BetaComp() { return rawBeta(); }\n"
+        ),
+        "src/core/gamma.ts": "export function gammaFn() { return 3; }\n",
+        "src/core/index.ts": (
+            "export * from './alpha';\n"
+            "export { rawBeta as betaFn, helperBeta, default as Beta } from './beta';\n"
+            "export * as gammaNs from './gamma';\n"
+        ),
+        "src/local_barrel.ts": (
+            "import { helperBeta } from './core';\n"
+            "export { helperBeta as aliasedBeta };\n"
+        ),
+        "src/cycle_a.ts": "export * from './cycle_b';\n",
+        "src/cycle_b.ts": "export * from './cycle_a';\n",
+        "src/app.ts": (
+            "import { alphaFn, betaFn, Beta, gammaNs } from './core';\n"
+            "import { aliasedBeta } from './local_barrel';\n"
+            "import { missingFn } from './cycle_a';\n"
+            "export function run() {\n"
+            "  alphaFn();\n"
+            "  betaFn();\n"
+            "  Beta();\n"
+            "  gammaNs.gammaFn();\n"
+            "  aliasedBeta();\n"
+            "  missingFn();\n"
+            "}\n"
+        ),
+    })
+
+    g = GraphBuilder(tmp_path).build_full()
+    run_out = _out(g, "src.app.run")
+
+    assert ("src.core.alpha.alphaFn", EdgeType.CALLS.value) in run_out
+    assert ("src.core.beta.rawBeta", EdgeType.CALLS.value) in run_out
+    assert ("src.core.beta.BetaComp", EdgeType.CALLS.value) in run_out
+    assert ("src.core.gamma.gammaFn", EdgeType.CALLS.value) in run_out
+    assert ("src.core.beta.helperBeta", EdgeType.CALLS.value) in run_out
+    assert ("src/local_barrel.ts", EdgeType.IMPORTS.value) in {
+        (v, d["type"]) for _, v, d in g.out_edges("src/app.ts", data=True)
+    }
+    assert ("src/cycle_a.ts", EdgeType.IMPORTS.value) in {
+        (v, d["type"]) for _, v, d in g.out_edges("src/app.ts", data=True)
+    }

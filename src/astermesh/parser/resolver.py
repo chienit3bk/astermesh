@@ -1,4 +1,5 @@
 import json
+import os
 import posixpath
 import re
 from collections import OrderedDict
@@ -109,18 +110,21 @@ class ModuleResolver:
         self._has_aliases = False
         self._base_url: str | None = None
         self._known_files: set[str] = set()
+        self._dir_entries: dict[str, frozenset[str] | None] = {}
         self._max_cache = max_cache
         self._cache: OrderedDict[tuple[str, str], str | None] = OrderedDict()
         self._load_tsconfig()
 
     def set_known_files(self, files: set[str]) -> None:
         self._known_files = files
+        self._dir_entries.clear()
         self._cache.clear()
 
     def reload_config(self) -> None:
         self._trie_root = _TrieNode()
         self._has_aliases = False
         self._base_url = None
+        self._dir_entries.clear()
         self._load_tsconfig()
         self._cache.clear()
 
@@ -198,44 +202,83 @@ class ModuleResolver:
             candidates.append(full)
         return candidates
 
-    def _is_within_workspace(self, rel_posix: str) -> bool:
-        if rel_posix.startswith(("..", "/")):
-            return False
+    def _normalize_within(self, rel_posix: str) -> str | None:
+        """Lexically validate and normalize workspace-relative POSIX path."""
+        if not rel_posix or rel_posix.startswith("/") or "\x00" in rel_posix:
+            return None
+        norm = posixpath.normpath(rel_posix)
+        if norm == ".." or norm.startswith(("../", "/")):
+            return None
+        return norm
+
+    def _dir_listing(self, parent_rel: str) -> frozenset[str] | None:
+        if parent_rel in self._dir_entries:
+            return self._dir_entries[parent_rel]
+        parent_path = self.root_path if parent_rel in ("", ".") else (self.root_path / parent_rel)
         try:
-            target = (self.root_path / rel_posix).resolve()
-            return target.is_relative_to(self.root_path)
+            entries: frozenset[str] | None = frozenset(os.listdir(parent_path))
+        except OSError:
+            entries = None
+        self._dir_entries[parent_rel] = entries
+        return entries
+
+    def _is_within_workspace(self, rel_posix: str) -> bool:
+        norm = self._normalize_within(rel_posix)
+        if norm is None:
+            return False
+        if norm in self._known_files:
+            return True
+        cand = self.root_path / norm
+        if not cand.exists() and not cand.is_symlink():
+            return True
+        try:
+            return cand.resolve().is_relative_to(self.root_path)
         except OSError:
             return False
 
     def _file_exists(self, rel_posix: str) -> bool:
-        if rel_posix in self._known_files:
-            return True
-        if not self._is_within_workspace(rel_posix):
+        norm = self._normalize_within(rel_posix)
+        if not norm or norm == ".":
             return False
-        cand = self.root_path / rel_posix
-        return cand.exists() and cand.is_file()
+        if norm in self._known_files:
+            return True
+        parent_rel, name = posixpath.split(norm)
+        listing = self._dir_listing(parent_rel)
+        if listing is None or name not in listing:
+            return False
+        cand = self.root_path / norm
+        if not cand.is_file():
+            return False
+        try:
+            return cand.resolve().is_relative_to(self.root_path)
+        except OSError:
+            return False
 
     def _probe_candidate(self, cand: str) -> str | None:
-        if not cand or not self._is_within_workspace(cand):
+        norm = self._normalize_within(cand)
+        if not norm:
             return None
 
-        if self._file_exists(cand):
-            return cand
+        if norm != "." and self._file_exists(norm):
+            return norm
 
+        if norm != ".":
+            for ext in SOURCE_PROBE_EXTS:
+                probe = f"{norm}{ext}"
+                if self._file_exists(probe):
+                    return probe
+
+        prefix = "" if norm == "." else f"{norm}/"
         for ext in SOURCE_PROBE_EXTS:
-            probe = f"{cand}{ext}"
+            probe = f"{prefix}index{ext}"
             if self._file_exists(probe):
                 return probe
 
-        for ext in SOURCE_PROBE_EXTS:
-            probe = f"{cand}/index{ext}"
-            if self._file_exists(probe):
-                return probe
-
-        for ext in ASSET_EXTENSIONS:
-            probe = f"{cand}{ext}"
-            if self._file_exists(probe):
-                return probe
+        if norm != ".":
+            for ext in ASSET_EXTENSIONS:
+                probe = f"{norm}{ext}"
+                if self._file_exists(probe):
+                    return probe
 
         return None
 

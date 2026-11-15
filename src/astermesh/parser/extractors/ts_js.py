@@ -15,7 +15,7 @@ from astermesh.parser.extractors.ts_scope import (
     extract_ts_params,
     unwrap_callable_initializer,
 )
-from astermesh.parser.types import FileParseResult, ImportSpec, RawEntity
+from astermesh.parser.types import FileParseResult, ImportSpec, RawEntity, ReexportSpec
 
 _TS_EXPORTABLE_DECLS = frozenset({
     "function_declaration",
@@ -119,6 +119,45 @@ def _parse_ts_import(
                         )
 
 
+def _collect_reexports(
+    node: tree_sitter.Node,
+    source: bytes,
+    spec: str,
+    result: FileParseResult,
+) -> None:
+    """Record star, namespace, and named barrel re-exports."""
+    for ch in node.children:
+        if ch.type == "export_clause":
+            for spec_n in ch.named_children:
+                if spec_n.type != "export_specifier":
+                    continue
+                name_n = spec_n.child_by_field_name("name")
+                alias_n = spec_n.child_by_field_name("alias")
+                if not name_n:
+                    continue
+                src_sym = node_text(name_n, source)
+                exp_name = node_text(alias_n, source) if alias_n else src_sym
+                result.reexports.append(
+                    ReexportSpec(
+                        raw_specifier=spec,
+                        exported_name=exp_name,
+                        source_symbol=src_sym,
+                    )
+                )
+        elif ch.type == "namespace_export":
+            ident = next((c for c in ch.children if c.type == "identifier"), None)
+            if ident:
+                result.reexports.append(
+                    ReexportSpec(
+                        raw_specifier=spec,
+                        exported_name=node_text(ident, source),
+                        is_namespace=True,
+                    )
+                )
+        elif ch.type == "*":
+            result.reexports.append(ReexportSpec(raw_specifier=spec, is_star=True))
+
+
 def _parse_ts_export(
     node: tree_sitter.Node,
     source: bytes,
@@ -128,28 +167,41 @@ def _parse_ts_export(
 ) -> None:
     decorators = [c for c in node.children if c.type == "decorator"]
 
-    # handle re-exports: export { a } from './b'
+    # barrel re-export statements
     src_node = node.child_by_field_name("source")
     if src_node:
         spec = strip_quotes(node_text(src_node, source))
         result.raw_import_specs.append(
             ImportSpec(local_name=None, raw_specifier=spec, is_side_effect=True)
         )
+        _collect_reexports(node, source, spec, result)
 
     decl = node.child_by_field_name("declaration")
 
-    # export { a, b as c }  /  export default a
+    # local exports and aliases
     if not src_node:
         for ch in node.children:
             if ch.type == "export_clause":
                 for spec_n in ch.named_children:
                     if spec_n.type == "export_specifier":
                         local_n = spec_n.child_by_field_name("name")
+                        alias_n = spec_n.child_by_field_name("alias")
                         if local_n:
-                            result.exported_names.add(node_text(local_n, source))
+                            local_sym = node_text(local_n, source)
+                            result.exported_names.add(local_sym)
+                            if alias_n:
+                                result.export_aliases[node_text(alias_n, source)] = local_sym
+        is_default = any(c.type == "default" for c in node.children)
         value_n = node.child_by_field_name("value")
         if value_n is not None and value_n.type == "identifier":
-            result.exported_names.add(node_text(value_n, source))
+            local_sym = node_text(value_n, source)
+            result.exported_names.add(local_sym)
+            if is_default:
+                result.export_aliases["default"] = local_sym
+        elif is_default and decl is not None:
+            decl_name = decl.child_by_field_name("name")
+            if decl_name is not None:
+                result.export_aliases["default"] = node_text(decl_name, source)
 
     targets = [decl] if decl else [c for c in node.children if c.type in _TS_EXPORTABLE_DECLS]
 

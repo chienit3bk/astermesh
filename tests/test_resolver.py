@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from astermesh.parser.resolver import (
     ModuleResolver,
     _strip_jsonc,
@@ -147,3 +149,55 @@ def test_resolver_alias_boundary_rejected(tmp_path: Path):
 
     resolver = ModuleResolver(repo)
     assert resolver.resolve("src/main.ts", "@leak/leak")[0] is None
+
+
+# lexical guard, dir cache, symlink check
+def test_resolver_lexical_reject_cached_dir_and_symlink_escape(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outside = tmp_path / "outside.ts"
+    outside.write_text("export const leak = 1;\n", encoding="utf-8")
+
+    repo = tmp_path / "repo"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src/app.ts").write_text("", encoding="utf-8")
+    (repo / "src/real.ts").write_text("export const ok = 1;\n", encoding="utf-8")
+    (repo / "tsconfig.json").write_text(
+        '{"compilerOptions": {"paths": {"@bad/*": ["../../outside/*"]}}}',
+        encoding="utf-8",
+    )
+
+    escape_link = repo / "src/evil.ts"
+    escape_link.symlink_to(outside)
+
+    resolver = ModuleResolver(repo)
+
+    resolve_calls = 0
+    orig_resolve = Path.resolve
+
+    def counted_resolve(self: Path, strict: bool = False) -> Path:
+        nonlocal resolve_calls
+        resolve_calls += 1
+        return orig_resolve(self, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", counted_resolve)
+
+    # lexical traversal misses avoid Path.resolve
+    assert resolver.resolve("src/app.ts", "../outside")[0] is None
+    assert resolver.resolve("src/app.ts", "@bad/secret")[0] is None
+    assert resolver.resolve("src/app.ts", "./does_not_exist")[0] is None
+    assert resolve_calls == 0
+
+    # known files hit in memory
+    resolver.set_known_files({"src/app.ts", "src/real.ts"})
+    assert resolver.resolve("src/app.ts", "./real")[0] == "src/real.ts"
+    assert resolve_calls == 0
+
+    # symlink pointing outside workspace is blocked
+    assert resolver.resolve("src/app.ts", "./evil")[0] is None
+    assert resolver.resolve("src/app.ts", "./real")[0] == "src/real.ts"
+    assert "src" in resolver._dir_entries or resolver._cache
+
+    resolver.set_known_files(set())
+    assert resolver._dir_entries == {}
+    assert len(resolver._cache) == 0

@@ -11,7 +11,7 @@ When large codebases are fed into Large Language Models (LLMs), feeding raw sour
 2. **Context Window Saturation**: Quick exhaustion of 128k/200k context limits, degrading attention mechanism quality.
 3. **Escalated API Costs**: Redundant tokens billed repeatedly across multi-turn developer prompts.
 
-**Astermesh** extracts deterministic logic entities (classes, methods, functions, variables), preserves physical line ranges (`[line_start, line_end]`), and clusters them via the **Leiden community algorithm** into a compact Semantic XML.
+**Astermesh** extracts deterministic logic entities (classes, methods, functions, components, hooks, services, variables), preserves physical line ranges (`[line_start, line_end]`), and clusters them via the **Leiden community algorithm** into dense `#ACN2` wire notation.
 
 ---
 
@@ -21,14 +21,17 @@ Clone this repository and run the benchmark directly against any local repositor
 
 ```bash
 # 1. Install Astermesh in your environment
-git clone https://github.com/your-username/astermesh.git
+git clone https://github.com/ddthang2611/astermesh.git
 cd astermesh
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# 2. Run benchmark on your target project
+# 2. Run benchmark on your target project (#ACN2 vs raw source & #ACN1)
 astermesh benchmark /path/to/your/project --report benchmark_report.md
+
+# Optional: compare against deprecated legacy XML or evaluate a token budget
+astermesh benchmark /path/to/your/project --include-xml-legacy --max-tokens 8000
 ```
 
 ---
@@ -39,11 +42,12 @@ The generated report (`benchmark_report.md` or terminal output) provides quantit
 
 ### Metric Explanations
 
-- **Raw Codebase Dump**: Total token count if all source files in the project are concatenated and passed directly into the LLM prompt.
-- **Astermesh Semantic XML**: Token count of the generated `xml-graph/context_graph.xml`, containing structural topology, FQNs, line coordinates, and call relationships.
+- **Raw Codebase Dump**: Total token count if all source files in the project are concatenated directly into the LLM prompt.
+- **Dense ACN Wire (`#ACN2`)**: Token count of the generated `#ACN2` context wire (exported by default to `astermesh-graph/context_graph.acn`), containing compressed directory/file/asset tables, typed entities, line coordinates, and relationships.
+- **Compact XML (Legacy, opt-in)**: Evaluated only when `--include-xml-legacy` is passed.
 - **Improvement / Savings Percentage**:
-  Typical projects see between **70% to 90%** reduction in total tokens.
-- **Single Community Average**: Average token size for an isolated architectural community. Using `get_community(name)` delivers micro-context with only a few hundred tokens.
+  Shows token reduction against raw source code, `#ACN1`, and (when opted in) legacy XML.
+- **Single Community Average**: Average `#ACN2` token size per discovered Leiden community for micro-context queries via `get_community_wire(name)`.
 - **Cost Savings (Estimated)**: Financial savings per 1,000 queries calculated at the standard reference price of \$3.00 / 1M input tokens.
 
 ---
@@ -51,6 +55,6 @@ The generated report (`benchmark_report.md` or terminal output) provides quantit
 ## 4. Benchmark Methodology & Precision
 
 Astermesh ensures high-fidelity benchmarks:
-- **Tokenizer**: Uses OpenAI `tiktoken` with the `cl100k_base` BPE tokenizer (used by GPT-4, Claude 3.x estimation, and modern LLM coding engines). Falls back to standard character-based estimation (`len(text) // 4`) if `tiktoken` is not installed.
-- **Ignored Files**: Automatically skips `.git`, `.venv`, `node_modules`, `dist`, `build`, and non-source binaries to prevent artificial token inflation.
-- **In-Memory Execution**: Benchmark renders Semantic XML entirely in-memory without polluting the target repository with temporary files.
+- **Tokenizer**: Uses OpenAI `tiktoken` with the `cl100k_base` BPE tokenizer (used by GPT-4, Claude 3.x estimation, and modern LLM coding engines). Falls back to deterministic character estimation (`max(1, len(text) // 4)`) if `tiktoken` is not installed.
+- **Ignored Files**: Automatically skips `.git`, `.venv`, `node_modules`, `dist`, `build`, `astermesh-graph`, `xml-graph`, `generated`, `__generated__`, and non-source binaries to prevent artificial token inflation.
+- **In-Memory Execution**: Benchmark renders `#ACN2` wire context entirely in memory without polluting the target repository with temporary files.

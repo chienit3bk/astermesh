@@ -13,7 +13,7 @@ from astermesh.serializers.markdown_report import export_markdown_report
 from astermesh.serializers.xml_context import export_semantic_xml
 from astermesh.server import create_mcp_server
 
-DEFAULT_OUTPUT_DIR = "xml-graph"
+DEFAULT_OUTPUT_DIR = "astermesh-graph"
 
 
 class TransportType(str, Enum):
@@ -63,6 +63,14 @@ def build(
     no_html: Annotated[
         bool, typer.Option("--no-html", help="Disable generating human HTML visual")
     ] = False,
+    max_tokens: Annotated[
+        int | None,
+        typer.Option("--max-tokens", min=1, help="Optional token budget for L0/L1/L2 pruning"),
+    ] = None,
+    include_xml_legacy: Annotated[
+        bool,
+        typer.Option("--include-xml-legacy", help="Also emit deprecated XML context_graph.xml"),
+    ] = False,
 ) -> None:
     resolved_path = path.resolve()
     ext = out_dir.suffix.lower()
@@ -92,9 +100,11 @@ def build(
 
     exported_targets: list[Path] = []
     if fmt in (OutputFormat.acn, OutputFormat.all):
-        export_compact_wire(graph, communities, resolved_path.name, acn_path)
+        export_compact_wire(
+            graph, communities, resolved_path.name, acn_path, max_tokens=max_tokens
+        )
         exported_targets.append(acn_path)
-    if fmt in (OutputFormat.xml, OutputFormat.all):
+    if fmt in (OutputFormat.xml, OutputFormat.all) or include_xml_legacy:
         export_semantic_xml(graph, communities, resolved_path.name, xml_path)
         exported_targets.append(xml_path)
 
@@ -126,8 +136,18 @@ def serve(
     no_watch: Annotated[
         bool, typer.Option("--no-watch", help="Disable incremental file watcher")
     ] = False,
+    context_max_tokens: Annotated[
+        int | None,
+        typer.Option(
+            "--context-max-tokens",
+            min=1,
+            help="Optional token budget applied to codebase://context",
+        ),
+    ] = None,
 ) -> None:
-    mcp = create_mcp_server(path, watch=not no_watch)
+    mcp = create_mcp_server(
+        path, watch=not no_watch, context_max_tokens=context_max_tokens
+    )
     if transport == TransportType.sse:
         mcp.run(transport="sse", host=host, port=port)
     else:
@@ -197,12 +217,23 @@ def benchmark(
         Path | None,
         typer.Option("-r", "--report", help="Optional markdown report output path"),
     ] = None,
+    max_tokens: Annotated[
+        int | None,
+        typer.Option("--max-tokens", min=1, help="Optional #ACN2 token budget to evaluate"),
+    ] = None,
+    include_xml_legacy: Annotated[
+        bool,
+        typer.Option(
+            "--include-xml-legacy",
+            help="Include deprecated XML serializer comparison metrics",
+        ),
+    ] = False,
 ) -> None:
     from astermesh.benchmark.runner import TokenBenchmarkRunner
 
     typer.echo(f"Running token benchmark on: {path.resolve()} ...")
     runner = TokenBenchmarkRunner(path)
-    metrics = runner.run()
+    metrics = runner.run(max_tokens=max_tokens, include_xml_legacy=include_xml_legacy)
 
     report_md = runner.format_markdown_report(metrics)
     typer.echo(report_md)

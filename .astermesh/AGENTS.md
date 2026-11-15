@@ -7,7 +7,7 @@ When inspecting, modifying, or refactoring code in this repository, AI Coding As
 ## The 3-Step Navigation Protocol
 
 ### Step 1: Macro Orientation (Architecture Overview)
-- Read `xml-graph/GRAPH_REPORT.md` or call MCP tool `get_community(name)` to identify which functional subsystem the task belongs to.
+- Read `astermesh-graph/GRAPH_REPORT.md`, read `codebase://context` (`#ACN2`), or call MCP tool `get_community(name)` / `get_community_wire(name)` to identify which functional subsystem the task belongs to.
 - Do NOT perform blind global searches (`grep_search` or `find_by_name`).
 
 ### Step 2: Micro Tracing (Dependency & Impact Analysis)

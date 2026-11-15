@@ -7,7 +7,7 @@ from astermesh.graph.filters import is_test_path
 from astermesh.graph.model import EdgeType, NodeType
 from astermesh.graph.symbol_index import SymbolIndex
 from astermesh.parser.resolver import ModuleResolver, is_asset_path
-from astermesh.parser.types import FileParseResult, ImportSpec, RawEntity
+from astermesh.parser.types import FileParseResult, ImportSpec, RawEntity, ReexportSpec
 
 _JS_LANGS = frozenset({"typescript", "javascript", "vue", "svelte"})
 _NON_CODE_TYPES = frozenset({
@@ -179,23 +179,153 @@ class RelationLinker:
             self._add_edge(source_fqn, target, etype)
 
     def _resolve_target_export(self, target_file_rel: str, imp_spec: ImportSpec) -> str | None:
+        resolved = self._resolve_export_recursive(target_file_rel, imp_spec, set())
+        return resolved or target_file_rel
+
+    def _resolve_export_recursive(
+        self,
+        target_file_rel: str,
+        imp_spec: ImportSpec,
+        visited: set[tuple[str, str]],
+    ) -> str | None:
+        """Resolve an imported binding transitively across barrel re-exports."""
         target_parsed = self.index.parsed_files.get(target_file_rel)
         if not target_parsed:
-            return target_file_rel
-        if imp_spec.imported_symbol:
-            cand = f"{target_parsed.module_fqn}.{imp_spec.imported_symbol}"
-            if cand in self.index.symbol_table:
-                return cand
+            return None
+
+        lookup_key = (
+            "__ns__"
+            if imp_spec.is_namespace
+            else ("default" if imp_spec.is_default else (imp_spec.imported_symbol or "__mod__"))
+        )
+        state = (target_file_rel, lookup_key)
+        if state in visited:
+            return None
+        visited.add(state)
+
         if imp_spec.is_namespace:
             return target_parsed.module_fqn
         if imp_spec.is_default:
-            stem = Path(target_file_rel).stem
-            for ent in target_parsed.entities:
-                if ent.name == stem or ent.is_exported:
-                    return ent.fqn
-            if target_parsed.entities:
-                return target_parsed.entities[0].fqn
-        return target_file_rel
+            return self._resolve_default_export(target_file_rel, target_parsed, imp_spec, visited)
+        if not imp_spec.imported_symbol:
+            return None
+        return self._resolve_named_export(
+            target_file_rel, target_parsed, imp_spec.imported_symbol, imp_spec.local_name, visited
+        )
+
+    def _resolve_default_export(
+        self,
+        target_file_rel: str,
+        target_parsed: FileParseResult,
+        imp_spec: ImportSpec,
+        visited: set[tuple[str, str]],
+    ) -> str | None:
+        sym_table = self.index.symbol_table
+        default_alias = target_parsed.export_aliases.get("default")
+        if default_alias:
+            cand = f"{target_parsed.module_fqn}.{default_alias}"
+            if cand in sym_table:
+                return sym_table[cand]
+            forwarded = self._resolve_reexported_import(
+                target_file_rel, target_parsed, default_alias, visited
+            )
+            if forwarded:
+                return forwarded
+
+        for rx in target_parsed.reexports:
+            if rx.exported_name == "default":
+                forwarded = self._follow_reexport(
+                    target_file_rel, rx, imp_spec.local_name, visited
+                )
+                if forwarded:
+                    return forwarded
+
+        stem = Path(target_file_rel).stem
+        for ent in target_parsed.entities:
+            if ent.name == stem or ent.is_exported:
+                return ent.fqn
+        if target_parsed.entities:
+            return target_parsed.entities[0].fqn
+        return None
+
+    def _resolve_named_export(
+        self,
+        target_file_rel: str,
+        target_parsed: FileParseResult,
+        req_name: str,
+        local_alias: str | None,
+        visited: set[tuple[str, str]],
+    ) -> str | None:
+        sym_table = self.index.symbol_table
+        local_name = target_parsed.export_aliases.get(req_name, req_name)
+        cand = f"{target_parsed.module_fqn}.{local_name}"
+        if cand in sym_table:
+            return sym_table[cand]
+
+        for rx in target_parsed.reexports:
+            if rx.exported_name == req_name:
+                forwarded = self._follow_reexport(target_file_rel, rx, local_alias, visited)
+                if forwarded:
+                    return forwarded
+
+        if local_name in target_parsed.exported_names or req_name in target_parsed.export_aliases:
+            forwarded = self._resolve_reexported_import(
+                target_file_rel, target_parsed, local_name, visited
+            )
+            if forwarded:
+                return forwarded
+
+        for rx in target_parsed.reexports:
+            if not rx.is_star:
+                continue
+            sub_path, _ = self.resolver.resolve(target_file_rel, rx.raw_specifier)
+            if not sub_path or sub_path not in self.index.parsed_files:
+                continue
+            probe = ImportSpec(
+                local_name=local_alias,
+                raw_specifier=rx.raw_specifier,
+                imported_symbol=req_name,
+            )
+            forwarded = self._resolve_export_recursive(sub_path, probe, visited)
+            if forwarded:
+                return forwarded
+        return None
+
+    def _resolve_reexported_import(
+        self,
+        target_file_rel: str,
+        target_parsed: FileParseResult,
+        local_name: str,
+        visited: set[tuple[str, str]],
+    ) -> str | None:
+        for imp in target_parsed.raw_import_specs:
+            if imp.local_name != local_name:
+                continue
+            sub_path, _ = self.resolver.resolve(target_file_rel, imp.raw_specifier)
+            if sub_path and sub_path in self.index.parsed_files:
+                return self._resolve_export_recursive(sub_path, imp, visited)
+        return None
+
+    def _follow_reexport(
+        self,
+        from_file: str,
+        rx: ReexportSpec,
+        local_alias: str | None,
+        visited: set[tuple[str, str]],
+    ) -> str | None:
+        sub_path, _ = self.resolver.resolve(from_file, rx.raw_specifier)
+        if not sub_path or sub_path not in self.index.parsed_files:
+            return None
+        if rx.is_namespace:
+            return self.index.parsed_files[sub_path].module_fqn
+        src_sym = rx.source_symbol
+        sub_spec = ImportSpec(
+            local_name=local_alias,
+            raw_specifier=rx.raw_specifier,
+            imported_symbol=None if src_sym == "default" else src_sym,
+            is_default=(src_sym == "default"),
+        )
+        return self._resolve_export_recursive(sub_path, sub_spec, visited)
 
     def resolve_symbol(
         self,
@@ -220,9 +350,29 @@ class RelationLinker:
             if "." in clean:
                 head, tail = clean.split(".", 1)
                 if head in local_aliases:
-                    candidate = f"{local_aliases[head]}.{tail}"
+                    head_target = local_aliases[head]
+                    candidate = f"{head_target}.{tail}"
                     if candidate in sym_table:
-                        return candidate
+                        return sym_table[candidate]
+                    # follow namespace imports targeting barrel modules
+                    node_data = self.graph.nodes.get(head_target)
+                    if node_data and node_data.get("type") == NodeType.MODULE.value:
+                        fpath = node_data.get("file_path")
+                        if fpath:
+                            member, *rest = tail.split(".", 1)
+                            resolved_member = self._resolve_export_recursive(
+                                fpath,
+                                ImportSpec(
+                                    local_name=head, raw_specifier="", imported_symbol=member
+                                ),
+                                set(),
+                            )
+                            if resolved_member:
+                                if not rest:
+                                    return resolved_member
+                                full_cand = f"{resolved_member}.{rest[0]}"
+                                if full_cand in sym_table:
+                                    return sym_table[full_cand]
 
         local_candidate = f"{parsed.module_fqn}.{clean}"
         if local_candidate in sym_table:

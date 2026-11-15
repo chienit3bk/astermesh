@@ -118,3 +118,45 @@ def test_query_edge_cases_and_cycles():
     outline = q.file_outline("src\\app\\main.py")
     assert [e["id"] for e in outline["outline"]] == ["src.app.B", "src.app.A"]
     assert "error" in q.file_outline("not_found.py")
+
+
+# locate ranking and semantic impact filter
+def test_locate_ranks_ast_above_containers_and_impact_skips_structural():
+    g = nx.MultiDiGraph()
+    for i in range(26):
+        fpath = f"dir_{i}/auth_{i}.ts"
+        g.add_node(fpath, name=f"auth_{i}.ts", type=NodeType.FILE.value, file_path=fpath)
+    g.add_node("auth", name="auth", type=NodeType.FOLDER.value, file_path="auth")
+    g.add_node("src/auth.ts", name="auth.ts", type=NodeType.FILE.value, file_path="src/auth.ts")
+    g.add_node(
+        "src.auth.AuthService",
+        name="AuthService",
+        type=NodeType.SERVICE.value,
+        file_path="src/auth.ts",
+        line_start=12,
+        line_end=30,
+    )
+    g.add_node(
+        "src.api.login",
+        name="login",
+        type=NodeType.FUNCTION.value,
+        file_path="src/api.ts",
+        line_start=1,
+        line_end=5,
+    )
+    g.add_edge("auth", "src/auth.ts", type=EdgeType.CONTAINS.value)
+    g.add_edge("src/auth.ts", "src.auth.AuthService", type=EdgeType.DEFINES.value)
+    g.add_edge("src.api.login", "src.auth.AuthService", type=EdgeType.CALLS.value)
+
+    q = GraphQuery(g)
+
+    located = q.locate("auth")
+    assert located[0]["id"] == "src.auth.AuthService"
+    assert located[0]["line_start"] == 12
+    ast_only = q.locate("auth", include_containers=False)
+    assert all(r["type"] not in {NodeType.FILE.value, NodeType.FOLDER.value} for r in ast_only)
+
+    impact = q.impact_radius("src.auth.AuthService", max_depth=3)
+    assert impact["total_affected_entities"] == 1
+    assert [item["id"] for item in impact["impact_by_depth"][1]] == ["src.api.login"]
+    assert impact["affected_files"] == ["src/api.ts"]

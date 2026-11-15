@@ -9,6 +9,14 @@ from watchdog.observers import Observer
 from astermesh.graph.builder import GraphBuilder
 from astermesh.graph.filters import is_ignored_dir, is_ignored_file
 
+_HANDLED_EVENT_TYPES: frozenset[str] = frozenset({
+    "created",
+    "modified",
+    "deleted",
+    "moved",
+})
+_CONFIG_FILES: frozenset[str] = frozenset({"tsconfig.json", "jsconfig.json"})
+
 
 # file system change event handler
 class GraphEventHandler(FileSystemEventHandler):
@@ -31,24 +39,37 @@ class GraphEventHandler(FileSystemEventHandler):
             fpath
         )
 
-    def on_any_event(self, event: FileSystemEvent) -> None:
-        src_path_str = os.fsdecode(event.src_path)
-        if is_ignored_dir(src_path_str):
-            return
+    # reload resolver config under builder lock
+    def _maybe_reload_config(self, *paths: Path) -> bool:
+        if any(p.name in _CONFIG_FILES for p in paths):
+            with self.builder.lock:
+                self.builder.resolver.reload_config()
+            return True
+        return False
 
-        src_path = Path(src_path_str)
+    def _relative_to_root(self, path: Path) -> str | None:
         try:
-            rel_path = src_path.resolve().relative_to(self.builder.root_path).as_posix()
+            rel = path.resolve().relative_to(self.builder.root_path).as_posix()
         except ValueError:
+            return None
+        return None if is_ignored_dir(rel) else rel
+
+    def on_any_event(self, event: FileSystemEvent) -> None:
+        if event.event_type not in _HANDLED_EVENT_TYPES:
             return
 
-        if src_path.name in ("tsconfig.json", "jsconfig.json"):
-            self.builder.resolver.reload_config()
+        src_path = Path(os.fsdecode(event.src_path))
+        rel_path = self._relative_to_root(src_path)
+        if rel_path is None:
+            return
 
         if event.event_type == "deleted":
+            reloaded = self._maybe_reload_config(src_path)
             self.builder.remove_path(rel_path)
-            self._schedule_callback()
+            if reloaded or self._is_supported_file(src_path):
+                self._schedule_callback()
         elif event.event_type in ("created", "modified"):
+            reloaded = self._maybe_reload_config(src_path)
             if not event.is_directory and self._is_supported_file(src_path):
                 self.builder.update_file(src_path)
                 self._schedule_callback()
@@ -56,15 +77,29 @@ class GraphEventHandler(FileSystemEventHandler):
                 with self.builder.lock:
                     self.builder.ensure_folder(src_path)
                 self._schedule_callback()
+            elif reloaded:
+                self._schedule_callback()
         elif event.event_type == "moved":
-            self.builder.remove_path(rel_path)
             raw_dest = getattr(event, "dest_path", "")
             dest_str = os.fsdecode(raw_dest) if raw_dest else ""
-            if dest_str:
-                dest_path = Path(dest_str)
-                if dest_path.exists() and not event.is_directory and self._is_supported_file(dest_path):
-                    self.builder.update_file(dest_path)
-            self._schedule_callback()
+            dest_path = Path(dest_str) if dest_str else None
+            dest_rel = self._relative_to_root(dest_path) if dest_path is not None else None
+            if dest_path is not None and dest_rel is not None:
+                reloaded = self._maybe_reload_config(src_path, dest_path)
+            else:
+                reloaded = self._maybe_reload_config(src_path)
+
+            self.builder.remove_path(rel_path)
+            if (
+                dest_path is not None
+                and dest_rel is not None
+                and dest_path.exists()
+                and not event.is_directory
+                and self._is_supported_file(dest_path)
+            ):
+                self.builder.update_file(dest_path)
+            if reloaded or self._is_supported_file(src_path) or dest_rel is not None:
+                self._schedule_callback()
 
     def _schedule_callback(self) -> None:
         if not self.on_updated:

@@ -5,11 +5,10 @@ from astermesh.graph.clustering import CommunityClusterer
 from astermesh.graph.model import EdgeType
 from astermesh.graph.query import GraphQuery
 from astermesh.serializers.compact_wire import render_compact_wire
-from astermesh.serializers.xml_context import render_semantic_xml
 
 
+# kiem thu 5 bat bien co lap khong gian asset
 def test_five_invariants_of_isolated_asset_space(tmp_path: Path):
-    # arrange
     (tmp_path / "src/assets").mkdir(parents=True)
     (tmp_path / "src/assets/logo.svg").write_text("<svg/>", encoding="utf-8")
     (tmp_path / "src/assets/unused.png").write_text("PNG", encoding="utf-8")
@@ -35,14 +34,16 @@ export function SecondaryText() {
     builder = GraphBuilder(tmp_path)
     g = builder.build_full()
 
-    # invariant 5: lazy asset creation (unused.png must NOT exist in graph)
+    # invariant 5: lazy asset creation
     assert g.has_node("src/assets/logo.svg")
     assert g.has_node("src/btn.module.css")
     assert g.has_node("src/global.css")
     assert not g.has_node("src/assets/unused.png")
 
     # invariant 4: two-step function-level edge mapping
-    btn_edges = [(v, d["type"]) for _, v, d in g.out_edges("src.PrimaryButton.PrimaryButton", data=True)]
+    btn_edges = [
+        (v, d["type"]) for _, v, d in g.out_edges("src.PrimaryButton.PrimaryButton", data=True)
+    ]
     assert ("src/assets/logo.svg", EdgeType.RENDERS.value) in btn_edges
     assert ("src/btn.module.css", EdgeType.REFERENCES.value) in btn_edges
 
@@ -65,13 +66,13 @@ export function SecondaryText() {
         assert "src/btn.module.css" not in c.members
     assert g.nodes["src/assets/logo.svg"]["community_id"] is None
 
-    # serializers exclude isolated asset files from file table
-    xml_out = render_semantic_xml(g, communities, "app")
-    assert "logo.svg" not in xml_out.split("<c ")[0]
-
+    # acn2 excludes isolated assets from @F and registers them in @A
     acn_out = render_compact_wire(g, communities, "app")
-    assert acn_out.startswith("#ACN1 ")
-    file_table_line = acn_out.splitlines()[1]
-    assert file_table_line.startswith("@F ")
+    acn_lines = acn_out.splitlines()
+    assert acn_lines[0].startswith("#ACN2 ")
+    assert "mode:L0" in acn_lines[0]
+    file_table_line = next(ln for ln in acn_lines if ln.startswith("@F "))
+    asset_table_line = next(ln for ln in acn_lines if ln.startswith("@A "))
     assert "logo.svg" not in file_table_line
-    assert "src/PrimaryButton.tsx" in file_table_line
+    assert "PrimaryButton.tsx" in file_table_line
+    assert "logo.svg" in asset_table_line

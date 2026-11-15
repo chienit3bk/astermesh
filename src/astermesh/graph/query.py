@@ -4,6 +4,23 @@ from typing import Any
 
 import networkx as nx
 
+from astermesh.graph.model import EdgeType, NodeType
+
+_CONTAINER_TYPES: frozenset[str] = frozenset({
+    NodeType.FILE.value,
+    NodeType.FOLDER.value,
+})
+
+_SEMANTIC_IMPACT_EDGES: frozenset[str] = frozenset({
+    EdgeType.CALLS.value,
+    EdgeType.INHERITS.value,
+    EdgeType.RENDERS.value,
+    EdgeType.INJECTS.value,
+    EdgeType.REFERENCES.value,
+    EdgeType.PROVIDES.value,
+    EdgeType.IMPORTS.value,
+})
+
 
 # centralized graph query engine
 class GraphQuery:
@@ -51,22 +68,50 @@ class GraphQuery:
             "community_id": data.get("community_id"),
         }
 
-    # locate symbols by name, suffix dot-path, or fqn query
-    def locate(self, symbol: str, limit: int = 25) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
+    # locate symbols sorted by match specificity
+    def locate(
+        self, symbol: str, limit: int = 25, include_containers: bool = True
+    ) -> list[dict[str, Any]]:
+        ranked: list[tuple[tuple[int, int, int, str], dict[str, Any]]] = []
         q = symbol.lower()
         suffix_target = f".{q}"
+
         for nid, data in self.graph.nodes(data=True):
             nid_str = str(nid)
             nid_lower = nid_str.lower()
             name_lower = str(data.get("name") or "").lower()
-            if q in nid_lower or nid_lower.endswith(suffix_target) or q == name_lower:
-                node_dict = dict(data)
-                node_dict.setdefault("id", nid_str)
-                results.append(node_dict)
-                if len(results) >= limit:
-                    break
-        return results
+            ntype = str(data.get("type") or "")
+            is_container = ntype in _CONTAINER_TYPES
+            if not include_containers and is_container:
+                continue
+
+            if is_container:
+                if q == nid_lower or q == name_lower:
+                    tier = 5
+                elif q in name_lower or q in nid_lower:
+                    tier = 6
+                else:
+                    continue
+            elif q == nid_lower or q == name_lower:
+                tier = 0
+            elif nid_lower.endswith(suffix_target):
+                tier = 1
+            elif name_lower.startswith(q):
+                tier = 2
+            elif q in name_lower:
+                tier = 3
+            elif q in nid_lower:
+                tier = 4
+            else:
+                continue
+
+            missing_line = 0 if data.get("line_start") is not None else 1
+            node_dict = dict(data)
+            node_dict.setdefault("id", nid_str)
+            ranked.append(((tier, missing_line, len(nid_str), nid_lower), node_dict))
+
+        ranked.sort(key=lambda item: item[0])
+        return [item[1] for item in ranked[:limit]]
 
     # retrieve 1-hop logic neighborhood
     def neighbors(self, symbol: str, direction: str = "both") -> dict[str, Any]:
@@ -124,6 +169,9 @@ class GraphQuery:
                 continue
 
             for u, _, edata in self.graph.in_edges(curr_node, data=True):
+                etype = str(edata.get("type") or "")
+                if etype not in _SEMANTIC_IMPACT_EDGES:
+                    continue
                 if u not in visited:
                     visited.add(u)
                     ndata = self.graph.nodes[u]

@@ -1,5 +1,7 @@
 # Astermesh
 
+![Astermesh Logo](docs/assets/astermesh-logo.jpg)
+
 Deterministic Code Knowledge Graph & Local Context Layer (MCP Server) for AI Coding Assistants.
 
 ---
@@ -8,8 +10,9 @@ Deterministic Code Knowledge Graph & Local Context Layer (MCP Server) for AI Cod
 
 Astermesh provides a **100% deterministic, static code intelligence layer** designed for LLMs, pair-programming assistants (Cursor, Claude Desktop, Antigravity), and human developers:
 - **Zero Vector Embeddings & Zero LLM Calls for Indexing**: Built purely on static AST parsing (`tree-sitter`) and in-memory graph algorithms (`networkx`, `igraph`, `leidenalg`).
+- **Polyglot & Modern Web Ecosystem**: Supports Python, TypeScript, JavaScript, React/JSX, Vue SFC, Svelte SFC, Angular, NestJS (DI & providers), satellite configuration/documentation files (`.toml`, `.json`, `.yaml`, `.md`, `Dockerfile`, `Makefile`), and isolated static assets.
 - **Dual Perspective**:
-  - **For LLMs**: Compact Semantic XML structured by Leiden community clusters to optimize attention mechanisms and eliminate token bloat.
+  - **For LLMs**: Dense `#ACN2` wire notation structured by Leiden community clusters with optional `L0/L1/L2` token budgeting.
   - **For Humans**: Interactive 2D topological graph visualizations in standalone HTML.
 - **Absolute Line Precision**: Replaces blind `grep`/regex searches with exact physical file paths and 1-based line intervals `[line_start, line_end]`.
 - **Real-Time Incremental Updates**: In-memory graph synchronizes delta changes in milliseconds upon file save via asynchronous file watching.
@@ -24,7 +27,7 @@ Requires Python `>= 3.10`:
 
 ```bash
 # Clone and setup virtual environment
-git clone https://github.com/your-username/astermesh.git
+git clone https://github.com/ddthang2611/astermesh.git
 cd astermesh
 python3 -m venv .venv
 source .venv/bin/activate
@@ -39,23 +42,27 @@ pip install -e .
 
 ### A. CLI Snapshot Mode
 
-Analyze a repository and export Semantic XML (for LLMs), architecture report, and interactive 2D HTML (for humans) into `xml-graph/`:
+Analyze a repository and export `#ACN2` wire topology (for LLMs), architecture report, and interactive 2D HTML (for humans) into `astermesh-graph/`:
 
 ```bash
-# Build artifacts into default xml-graph/ directory
+# Build artifacts into default astermesh-graph/ directory
 astermesh build .
+
+# Build with a strict token budget (triggers L0 -> L1 -> L2 pruning)
+astermesh build . --max-tokens 6000
 
 # Build for another target repository
 astermesh build /path/to/target/repo
 
-# Skip HTML visualization (export XML & Markdown report only)
+# Skip HTML visualization or also emit deprecated legacy XML
 astermesh build . --no-html
+astermesh build . --include-xml-legacy
 ```
 
-Generated artifacts in `xml-graph/`:
-- `xml-graph/context_graph.xml`: Compact community topology for LLM attention context.
-- `xml-graph/GRAPH_REPORT.md`: Macro architecture summary for LLM working memory.
-- `xml-graph/astermesh_view.html`: Standalone interactive 2D network map.
+Generated artifacts in `astermesh-graph/`:
+- `astermesh-graph/context_graph.acn`: Dense `#ACN2` community topology for LLM attention context.
+- `astermesh-graph/GRAPH_REPORT.md`: Macro architecture summary for LLM working memory.
+- `astermesh-graph/astermesh_view.html`: Standalone interactive 2D network map.
 
 Locate symbols and physical lines directly from the terminal:
 ```bash
@@ -113,10 +120,13 @@ See [Benchmark Guide](docs/BENCHMARK.md) for full benchmark methodology and cost
 - `get_neighbors(symbol: str, direction: str = "both")`: Inspects 1-hop callers (`in`) and callees (`out`) without reading entire files.
 - `get_impact_radius(symbol: str, max_depth: int = 2)`: Computes blast radius and transitive callers to assess regression risks.
 - `trace_path(source: str, target: str)`: Computes the shortest interaction or dependency path between two logic entities.
-- `get_community(name: str)`: Retrieves all entities in an architectural community identified by the Leiden algorithm.
+- `get_community(name: str)`: Retrieves all entities in a functional community identified by the Leiden algorithm.
+- `get_community_wire(name: str, max_tokens: int | None = None)`: Renders a single functional community in standalone `#ACN2` wire notation.
+- `read_file_snippet(file_path: str, start_line: int = 1, end_line: int | None = None)`: Reads exact physical line slices from workspace files.
 - `rebuild_graph()`: Triggers a full re-scan and graph re-indexing in memory.
 
 ### Available Resources:
+- `codebase://context`: Dense `#ACN2` wire representation of the repository graph (supports `--context-max-tokens`).
 - `codebase://report`: Macro architecture snapshot (statistics, Leiden communities, God nodes, and dependency cycles).
 - `codebase://communities`: Summary list of all detected functional modules.
 

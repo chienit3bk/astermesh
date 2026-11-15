@@ -1,26 +1,66 @@
 from pathlib import Path
 from typing import Any
 
+import networkx as nx
 from mcp.server.mcpserver import MCPServer
 
 from astermesh.graph.builder import GraphBuilder
 from astermesh.graph.clustering import CommunityClusterer
-from astermesh.graph.model import CommunityInfo
+from astermesh.graph.model import CommunityInfo, EdgeType
 from astermesh.graph.query import GraphQuery
 from astermesh.graph.watcher import WorkspaceWatcher
 from astermesh.serializers.compact_wire import render_compact_wire
 from astermesh.serializers.markdown_report import render_markdown_report
+
+_SUBGRAPH_EDGE_TYPES: frozenset[str] = frozenset({
+    EdgeType.INHERITS.value,
+    EdgeType.RENDERS.value,
+    EdgeType.INJECTS.value,
+    EdgeType.CALLS.value,
+    EdgeType.REFERENCES.value,
+})
+
+
+# isolate single community with direct targets
+def _build_community_subgraph(
+    graph: nx.MultiDiGraph, comm: CommunityInfo
+) -> nx.MultiDiGraph:
+    sub = nx.MultiDiGraph()
+    comm_set = {m for m in comm.members if graph.has_node(m)}
+    keep_nodes: set[str] = set(comm_set)
+
+    for m in comm_set:
+        for _, target, edata in graph.out_edges(m, data=True):
+            if str(edata.get("type", "")) in _SUBGRAPH_EDGE_TYPES and graph.has_node(target):
+                keep_nodes.add(target)
+
+    for nid in keep_nodes:
+        ndata = dict(graph.nodes[nid])
+        sub.add_node(nid, **ndata)
+        fpath = ndata.get("file_path")
+        if fpath and fpath != "." and graph.has_node(fpath):
+            sub.add_node(fpath, **dict(graph.nodes[fpath]))
+
+    for m in comm_set:
+        for _, target, edata in graph.out_edges(m, data=True):
+            if target in keep_nodes and str(edata.get("type", "")) in _SUBGRAPH_EDGE_TYPES:
+                etype = str(edata.get("type", ""))
+                sub.add_edge(m, target, key=etype, type=etype)
+
+    return sub
+
 
 SERVER_INSTRUCTIONS = """
 Astermesh provides a deterministic in-memory code knowledge graph and context layer.
 It indexes physical AST entities (Python, JS/TS, React, Vue, Svelte, Angular), satellite configs (.toml, .json, .md), isolated assets, and functional communities.
 
 Available MCP Resources:
-- `codebase://context`: Dense machine-optimized ACN wire representation of the entire repository graph.
+- `codebase://context`: Dense machine-optimized #ACN2 wire representation (L0/L1/L2) of the repository graph.
 - `codebase://report`: Macro architecture snapshot (statistics, Leiden communities, God nodes, and dependency cycles).
 - `codebase://communities`: Summary list of all detected functional modules.
 
 Recommended workflow for code intelligence:
+- Use `get_community_wire` to zoom into a single functional community in dense #ACN2 notation.
 - Use `locate_symbol` to resolve file paths and physical line ranges [line_start, line_end] by bare name, Class.method, or FQN.
 - Use `get_file_outline` to inspect the structural outline of any source or config/doc file (e.g. pyproject.toml, README.md, .tsx, .vue).
 - Use `read_file_snippet` to read only exact target line ranges instead of reading entire files.
@@ -32,7 +72,9 @@ Recommended workflow for code intelligence:
 
 
 # initialize mcp daemon server
-def create_mcp_server(root_path: Path, watch: bool = True) -> MCPServer:
+def create_mcp_server(
+    root_path: Path, watch: bool = True, context_max_tokens: int | None = None
+) -> MCPServer:
     resolved_root = root_path.resolve()
     mcp = MCPServer(name="Astermesh", instructions=SERVER_INSTRUCTIONS)
     builder = GraphBuilder(resolved_root)
@@ -59,9 +101,14 @@ def create_mcp_server(root_path: Path, watch: bool = True) -> MCPServer:
 
     @mcp.resource("codebase://context")
     def get_codebase_context() -> str:
-        """Dense line-compressed ACN representation of the codebase knowledge graph."""
+        """Dense line-compressed #ACN2 representation of the codebase knowledge graph."""
         with builder.lock:
-            return render_compact_wire(builder.graph, communities_list, resolved_root.name)
+            return render_compact_wire(
+                builder.graph,
+                communities_list,
+                resolved_root.name,
+                max_tokens=context_max_tokens,
+            )
 
     @mcp.resource("codebase://report")
     def get_codebase_report() -> str:
@@ -110,6 +157,30 @@ def create_mcp_server(root_path: Path, watch: bool = True) -> MCPServer:
                 "size": comm.size,
                 "members": members_info,
             }
+
+    @mcp.tool()
+    def get_community_wire(name: str, max_tokens: int | None = None) -> str:
+        """Render a single functional community in dense #ACN2 wire notation for targeted zoom-in.
+
+        Args:
+            name: Community ID (e.g. 'C1') or community name (case-insensitive).
+            max_tokens: Optional token budget triggering L0/L1/L2 compression on the subgraph.
+
+        Returns:
+            Standalone #ACN2 payload scoped to the selected community and its direct targets.
+        """
+        with builder.lock:
+            comm = community_index.get(name.lower())
+            if not comm:
+                available = ", ".join(f"{c.id}:{c.name}" for c in communities_list[:20])
+                return f"Error: Community '{name}' not found. Available: {available}"
+            sub = _build_community_subgraph(builder.graph, comm)
+            return render_compact_wire(
+                sub,
+                [comm],
+                resolved_root.name,
+                max_tokens=max_tokens,
+            )
 
     @mcp.tool()
     def get_neighbors(symbol: str, direction: str = "both") -> dict[str, Any]:

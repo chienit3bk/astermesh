@@ -17,6 +17,7 @@ IGNORE_DIRS = frozenset({
     ".next",
     ".nuxt",
     "xml-graph",
+    "astermesh-graph",
     # codegen output (graphql-codegen, relay, prisma, openapi, ...)
     "generated",
     "__generated__",

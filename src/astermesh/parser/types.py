@@ -12,6 +12,16 @@ class ImportSpec:
     is_side_effect: bool = False
 
 
+# barrel re-export specification container
+@dataclass
+class ReexportSpec:
+    raw_specifier: str
+    exported_name: str | None = None
+    source_symbol: str | None = None
+    is_star: bool = False
+    is_namespace: bool = False
+
+
 # raw entity extracted from ast
 @dataclass
 class RawEntity:
@@ -45,4 +55,6 @@ class FileParseResult:
     raw_import_specs: list[ImportSpec] = field(default_factory=list)
     # names exported via `export { a }` / `export default a` after their declaration
     exported_names: set[str] = field(default_factory=set)
+    export_aliases: dict[str, str] = field(default_factory=dict)
+    reexports: list[ReexportSpec] = field(default_factory=list)
     language: str = "unknown"

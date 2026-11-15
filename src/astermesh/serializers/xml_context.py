@@ -1,3 +1,4 @@
+import warnings
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.dom import minidom
@@ -12,6 +13,14 @@ _EXCLUDED_FILE_TYPES: frozenset[str] = frozenset({
 })
 
 
+def _warn_legacy_xml(func_name: str) -> None:
+    warnings.warn(
+        f"{func_name} is deprecated; use render_compact_wire/export_compact_wire (#ACN2).",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 # render compact or verbose semantic xml string in memory
 def render_semantic_xml(
     graph: nx.MultiDiGraph,
@@ -19,6 +28,7 @@ def render_semantic_xml(
     root_name: str,
     compact: bool = True,
 ) -> str:
+    _warn_legacy_xml("render_semantic_xml")
     if not compact:
         return _render_verbose_xml(graph, communities, root_name)
 
@@ -194,7 +204,10 @@ def export_semantic_xml(
     output_path: Path,
     compact: bool = True,
 ) -> str:
-    pretty_xml = render_semantic_xml(graph, communities, root_name, compact=compact)
+    _warn_legacy_xml("export_semantic_xml")
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        pretty_xml = render_semantic_xml(graph, communities, root_name, compact=compact)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(pretty_xml, encoding="utf-8")
     return pretty_xml
