@@ -12,11 +12,6 @@ requires-python = ">=3.10"
 authors = [
     { name = "ddthang2611" }
 ]
-
-[project.urls]
-Homepage = "https://github.com/ddthang2611/astermesh"
-Repository = "https://github.com/ddthang2611/astermesh"
-Issues = "https://github.com/ddthang2611/astermesh/issues"
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -42,6 +37,11 @@ dependencies = [
     "pyvis>=0.3.2",
     "tiktoken>=0.7.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ddthang2611/astermesh"
+Repository = "https://github.com/ddthang2611/astermesh"
+Issues = "https://github.com/ddthang2611/astermesh/issues"
 
 [project.optional-dependencies]
 dev = [
